@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use libp2p::{
-    gossipsub, kad::{self, store::MemoryStore, QueryId, QueryResult}, mdns, request_response::{self, ProtocolSupport}, swarm::{self, NetworkBehaviour}, StreamProtocol
+    gossipsub, kad::{self, store::MemoryStore, QueryId, QueryResult}, mdns, request_response::{self, ProtocolSupport}, swarm::NetworkBehaviour, StreamProtocol
 };
+use tokio::{fs::File, io::AsyncReadExt};
 
 use crate::util::{ChatState, PeerData};
 
@@ -88,6 +89,7 @@ pub async fn handle_chat_event(chat_event: ChatBehaviourEvent, state: &mut ChatS
         _ => {}
     }
 }
+
 pub async fn handle_kademlia_event(id: QueryId, result: QueryResult, state: &mut ChatState ) {
     match result {
         kad::QueryResult::GetRecord(Ok(kad::GetRecordOk::FoundRecord(peer_record))) => {
@@ -121,5 +123,49 @@ pub async fn handle_kademlia_event(id: QueryId, result: QueryResult, state: &mut
         },
 
         _ => {}
+    }
+}
+
+pub async fn handle_file_event(request_response_event: request_response::Event<FileRequest, FileResponse>, swarm: &mut libp2p::Swarm<SwapBytesBehaviour>) {
+    match request_response_event {
+        request_response::Event::Message {message, ..} => match message {
+            request_response::Message::Request {request, channel, ..} => {
+                // A request has been received
+                let filename = request.0;
+                let file_bytes = match File::open(filename).await {
+                    Ok(mut file) => {
+                        let mut buffer = Vec::new();
+                        // Read the file into a buffer
+                        if let Err(e) = file.read_to_end(&mut buffer).await {
+                            println!("Failed to read file: {:?}", e);
+                        }
+                        buffer
+                    }
+                    // If the file doesn't exist send an empty vector
+                    Err(_) => vec![],
+                };
+                // Send the response to the file requester
+                swarm.behaviour_mut().request_response.request_response.send_response(channel, FileResponse(file_bytes)).unwrap();
+            }
+
+            request_response::Message::Response {response, ..} => {
+                println!("response {:?}", response);
+            }
+        },
+
+        // outgoing request fails to be sent
+        request_response::Event::OutboundFailure {peer,request_id, error, .. } => {
+            println!("Request {:?} to peer {:?} failed to send: {:?}", request_id, peer, error);
+        },
+
+        // incoming request fails to be processed
+        request_response::Event::InboundFailure {peer, request_id, error, .. } => {
+            println!("Request {:?} from peer {:?} failed to be read: {:?}", request_id, peer, error);
+        },
+
+        // outgoing request is successfully sent
+        request_response::Event::ResponseSent {peer, request_id, .. } => {
+            println!("Request {:?} to peer {:?} has been successfully sent.", request_id, peer);
+        },
     }
 }

@@ -1,13 +1,13 @@
 mod behaviour;
 mod util;
-use util::{ Cli, get_and_save_nickname, ChatState };
-use behaviour::{ create_swapbytes_behaviour, handle_chat_event, handle_kademlia_event, ChatBehaviourEvent, SwapBytesBehaviourEvent };
 
-use clap::Parser;
 use futures::StreamExt;
-use libp2p::{ gossipsub, kad, mdns, noise, request_response, swarm::SwarmEvent, tcp, yamux };
+use util::{ Cli, get_and_save_nickname, ChatState };
+use behaviour::{create_swapbytes_behaviour, handle_chat_event, handle_file_event, handle_kademlia_event, RequestResponseBehaviourEvent, SwapBytesBehaviourEvent};
+use clap::Parser;
+use libp2p::{ gossipsub, kad, noise, swarm::SwarmEvent, tcp, yamux };
 use std::{ collections::HashMap, error::Error, time::Duration };
-use tokio::{ io::{ self, AsyncBufReadExt }, select };
+use tokio::{io::{ self, AsyncBufReadExt }, select};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -74,10 +74,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     handle_kademlia_event(id, result, &mut state).await;
                 }
 
-                // TODO: Handle all file exchange events
+                // Handle all file exchange events
+                SwarmEvent::Behaviour(SwapBytesBehaviourEvent::RequestResponse(RequestResponseBehaviourEvent::RequestResponse(request_response_event))) => {
+                    handle_file_event(request_response_event, &mut swarm).await;
+                },
 
                 _ => {}
+            }
         }
-    }
     }
 }
