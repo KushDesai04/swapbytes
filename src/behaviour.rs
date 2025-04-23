@@ -3,7 +3,7 @@ use libp2p::{
     gossipsub, kad::{self, store::MemoryStore, QueryId, QueryResult}, mdns, request_response::{self, ProtocolSupport}, swarm::{self, NetworkBehaviour}, StreamProtocol
 };
 
-use crate::util::ChatState;
+use crate::util::{ChatState, PeerData};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileRequest(pub String);
@@ -92,12 +92,17 @@ pub async fn handle_kademlia_event(id: QueryId, result: QueryResult, state: &mut
     match result {
         kad::QueryResult::GetRecord(Ok(kad::GetRecordOk::FoundRecord(peer_record))) => {
             if let Some((peer_id, msg)) = state.pending_messages.remove(&id) {
-                // Triggered when an incoming message is recieved and the nickname is found
-                let kad::PeerRecord { record: kad::Record { value, .. }, .. } = peer_record;
-                if let Ok(nickname) = std::str::from_utf8(&value) {
-                    println!("{nickname}: {}", String::from_utf8_lossy(&msg));
-                } else {
-                    println!("Peer {peer_id}: {}", String::from_utf8_lossy(&msg));
+                match serde_json::from_slice::<PeerData>(&peer_record.record.value) {
+                    Ok(peer) => {
+                        println!("{} ( {}★ ): {}",
+                            peer.nickname,
+                            peer.rating,
+                            String::from_utf8_lossy(&msg)
+                        );
+                    }
+                    Err(_) => {
+                        println!("Peer {peer_id}: {}", String::from_utf8_lossy(&msg));
+                    }
                 }
             }
         },

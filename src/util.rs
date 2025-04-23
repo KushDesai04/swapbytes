@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use clap::Parser;
 use libp2p::{ kad, Multiaddr, PeerId };
+use serde::{ser, Deserialize, Serialize};
 use tokio::io;
 
 use crate::behaviour::SwapBytesBehaviour;
@@ -16,6 +17,12 @@ pub struct Cli {
 }
 pub struct ChatState {
     pub pending_messages: HashMap<kad::QueryId, (PeerId, Vec<u8>)>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PeerData {
+    pub nickname: String,
+    pub rating: i32,
 }
 
 pub async fn get_and_save_nickname(
@@ -46,9 +53,16 @@ pub async fn get_and_save_nickname(
     }
 
     println!("Your nickname is: {}", nickname);
+    let peer_data = PeerData {
+        nickname: nickname.trim().to_string(),
+        rating: 0, // Initial rating
+    };
+
+    let serialized = serde_json::to_vec(&peer_data).expect("Serialization failed");
+
     let nickname_record = kad::Record {
         key: kad::RecordKey::new(peer_id),
-        value: nickname.as_bytes().to_vec(),
+        value: serialized,
         publisher: None,
         expires: None,
     };
