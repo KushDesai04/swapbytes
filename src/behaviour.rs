@@ -41,7 +41,9 @@ pub fn create_swapbytes_behaviour(key: &libp2p::identity::Keypair) -> Result<Swa
         )], request_response::Config::default()),
     };
 
-    let kademlia_behaviour = kad::Behaviour::new(key.public().to_peer_id(), MemoryStore::new(key.public().to_peer_id()));
+    let kademlia_behaviour = kad::Behaviour::new(
+                                                    key.public().to_peer_id(),
+                                                MemoryStore::new(key.public().to_peer_id()));
 
     Ok(SwapBytesBehaviour {
         chat: chat_behaviour,
