@@ -17,6 +17,7 @@ pub struct Cli {
 }
 pub struct ChatState {
     pub pending_messages: HashMap<kad::QueryId, (PeerId, Vec<u8>)>,
+    pub pending_connections: HashMap<kad::QueryId, PeerId>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -71,4 +72,17 @@ pub async fn get_and_save_nickname(
         .behaviour_mut()
         .kademlia.put_record(nickname_record, kad::Quorum::One)
         .expect("Failed to store record locally.");
+
+    // Storing nickname: peer record - uses double the storage but allows for easy lookup
+    let reverse_key = kad::RecordKey::new(&nickname);
+    let reverse_record = kad::Record {
+        key: reverse_key,
+        value: peer_id.to_string().into_bytes(),
+        publisher: None,
+        expires: None,
+    };
+    swarm
+        .behaviour_mut()
+        .kademlia.put_record(reverse_record, kad::Quorum::One)
+        .expect("Failed to store reverse record locally.");
 }

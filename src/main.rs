@@ -1,8 +1,10 @@
 mod behaviour;
 mod util;
+mod input;
 
 use futures::StreamExt;
 use util::{ Cli, get_and_save_nickname, ChatState };
+use input::handle_input;
 use behaviour::{create_swapbytes_behaviour, handle_chat_event, handle_file_event, handle_kademlia_event, RequestResponseBehaviourEvent, SwapBytesBehaviourEvent};
 use clap::Parser;
 use libp2p::{ gossipsub, kad, noise, swarm::SwarmEvent, tcp, yamux };
@@ -27,10 +29,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let mut state = ChatState {
         pending_messages: HashMap::new(),
+        pending_connections: HashMap::new(),
     };
 
     // Creates a chatroom to be used by all connected peers by default
-    let topic = gossipsub::IdentTopic::new("default");
+    let mut topic = gossipsub::IdentTopic::new("default");
 
     swarm.behaviour_mut().chat.gossipsub.subscribe(&topic)?;
     swarm.behaviour_mut().kademlia.set_mode(Some(kad::Mode::Server));
@@ -56,9 +59,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     loop {
         select! {
             Ok(Some(line)) = stdin.next_line() => {
-                if let Err(e) = swarm.behaviour_mut().chat.gossipsub.publish(topic.clone(), line.as_bytes()) {
-                    println!("Publish error: {:?}", e);
-                };
+                handle_input(line.trim(), &mut swarm, &mut topic, &mut state).await;
             }
 
             event = swarm.select_next_some() => match event {
@@ -71,7 +72,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
                 // Handle all Kademlia events
                 SwarmEvent::Behaviour(SwapBytesBehaviourEvent::Kademlia(kad::Event::OutboundQueryProgressed {id, result, .. })) => {
-                    handle_kademlia_event(id, result, &mut state).await;
+                    handle_kademlia_event(id, result, &mut state, &mut swarm).await;
                 }
 
                 // Handle all file exchange events

@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use libp2p::{
-    gossipsub, kad::{self, store::MemoryStore, QueryId, QueryResult}, mdns, request_response::{self, ProtocolSupport}, swarm::NetworkBehaviour, StreamProtocol
+    gossipsub, kad::{self, store::MemoryStore, QueryId, QueryResult}, mdns, request_response::{self, ProtocolSupport}, swarm::NetworkBehaviour, PeerId, StreamProtocol
 };
-use tokio::{fs::File, io::AsyncReadExt};
+use tokio::{fs::File, io::{AsyncReadExt, AsyncWriteExt}};
 
 use crate::util::{ChatState, PeerData};
 
@@ -90,7 +90,7 @@ pub async fn handle_chat_event(chat_event: ChatBehaviourEvent, state: &mut ChatS
     }
 }
 
-pub async fn handle_kademlia_event(id: QueryId, result: QueryResult, state: &mut ChatState ) {
+pub async fn handle_kademlia_event(id: QueryId, result: QueryResult, state: &mut ChatState, swarm: &mut libp2p::Swarm<SwapBytesBehaviour> ) {
     match result {
         kad::QueryResult::GetRecord(Ok(kad::GetRecordOk::FoundRecord(peer_record))) => {
             if let Some((peer_id, msg)) = state.pending_messages.remove(&id) {
@@ -106,6 +106,11 @@ pub async fn handle_kademlia_event(id: QueryId, result: QueryResult, state: &mut
                         println!("Peer {peer_id}: {}", String::from_utf8_lossy(&msg));
                     }
                 }
+            } else if let Some(peer_id) = state.pending_connections.remove(&id) {
+                let private_key = libp2p::identity::Keypair::generate_ed25519();
+                let peer_id = PeerId::from(private_key.public());
+                swarm.behaviour_mut().chat.gossipsub.subscribe()?;
+
             }
         },
 
@@ -148,8 +153,16 @@ pub async fn handle_file_event(request_response_event: request_response::Event<F
                 swarm.behaviour_mut().request_response.request_response.send_response(channel, FileResponse(file_bytes)).unwrap();
             }
 
-            request_response::Message::Response {response, ..} => {
+            request_response::Message::Response {response, request_id } => {
                 println!("response {:?}", response);
+                // Save the response to a file
+                let filename = format!("received_file_{}", request_id);
+                let mut file = File::create(filename).await.unwrap();
+                if let Err(e) = file.write_all(&response.0).await {
+                    println!("Failed to write file: {:?}", e);
+                } else {
+                    println!("File received and saved successfully.");
+                }
             }
         },
 
