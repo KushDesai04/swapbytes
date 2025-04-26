@@ -1,6 +1,8 @@
+use std::str::FromStr;
+
 use serde::{Deserialize, Serialize};
 use libp2p::{
-    gossipsub::{self, IdentTopic}, kad::{self, store::MemoryStore, QueryId, QueryResult}, mdns, request_response::{self, ProtocolSupport}, swarm::NetworkBehaviour, PeerId, StreamProtocol
+    gossipsub::{self, IdentTopic}, kad::{self, store::MemoryStore, Mode, QueryId, QueryResult}, mdns, request_response::{self, ProtocolSupport}, swarm::NetworkBehaviour, PeerId, StreamProtocol
 };
 use tokio::{fs::File, io::{self, AsyncReadExt, AsyncWriteExt}};
 use uuid::Uuid;
@@ -51,9 +53,14 @@ pub fn create_swapbytes_behaviour(key: &libp2p::identity::Keypair) -> Result<Swa
         )], request_response::Config::default()),
     };
 
-    let kademlia_behaviour = kad::Behaviour::new(
+    let mut kademlia_behaviour = kad::Behaviour::new(
                                                     key.public().to_peer_id(),
                                                 MemoryStore::new(key.public().to_peer_id()));
+    kademlia_behaviour.set_mode(Some(Mode::Server));
+    kademlia_behaviour.add_address(
+        &PeerId::from_str("QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN")?,
+        "/dnsaddr/bootstrap.libp2p.io".parse()?
+    );
 
     Ok(SwapBytesBehaviour {
         chat: chat_behaviour,
@@ -231,7 +238,7 @@ pub async fn handle_req_res_event(request_response_event: request_response::Even
                     let private_topic = IdentTopic::new(format!("private/{room_id}"));
                     swarm.behaviour_mut().chat.gossipsub.subscribe(&private_topic).unwrap();
                     *topic = private_topic.clone();
-                    println!("You have joined the private room: {room_id}");
+                    println!("You have joined the private room: {room_id}. To leave, type /leave.");
                 } else {
                     private_room_response = PrivateRoomProtocol::Reject(room_id.clone());
                 };
@@ -264,7 +271,7 @@ pub async fn handle_req_res_event(request_response_event: request_response::Even
                     let private_topic = IdentTopic::new(format!("private/{room_id}"));
                     swarm.behaviour_mut().chat.gossipsub.subscribe(&private_topic).unwrap();
                     *topic = private_topic.clone();
-                    println!("You have joined the private room: {room_id}");
+                    println!("You have joined the private room: {room_id}. To leave, type /leave.");
                 }
             }
         },

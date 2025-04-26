@@ -47,7 +47,7 @@ pub async fn get_and_save_nickname(
     stdin: &mut io::Lines<io::BufReader<io::Stdin>>,
     peer_id: Vec<u8>,
     swarm: &mut libp2p::Swarm<SwapBytesBehaviour>
-) {
+) -> String{
     let nickname;
     println!("Enter a nickname: ");
     loop {
@@ -104,4 +104,5 @@ pub async fn get_and_save_nickname(
         .behaviour_mut()
         .kademlia.put_record(reverse_record, kad::Quorum::One)
         .expect("Failed to store reverse record locally.");
+    nickname
 }
