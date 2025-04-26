@@ -1,6 +1,6 @@
-use libp2p::{gossipsub, kad, PeerId};
+use libp2p::{gossipsub, kad};
 
-use crate::{behaviour::SwapBytesBehaviour, util::ChatState};
+use crate::{behaviour::SwapBytesBehaviour, util::{ChatState, ConnectionRequest}};
 
 pub async fn handle_input(line: &str, swarm: &mut libp2p::Swarm<SwapBytesBehaviour>, topic : &mut gossipsub::IdentTopic, state: &mut ChatState) {
     match line {
@@ -9,7 +9,7 @@ pub async fn handle_input(line: &str, swarm: &mut libp2p::Swarm<SwapBytesBehavio
             std::process::exit(0);
         },
         "/help" => {
-            println!("Available commands: /exit, /help, <message>");
+            println!("Available commands: /exit, /help, /list, /connect <peer nickname>, <message>");
         },
         "/list" => {
             println!("Connected peers: {:?}", swarm.connected_peers().collect::<Vec<_>>());
@@ -19,11 +19,10 @@ pub async fn handle_input(line: &str, swarm: &mut libp2p::Swarm<SwapBytesBehavio
         val if val.starts_with("/connect") => {
             let parts: Vec<&str> = val.split_whitespace().collect();
             if parts.len() == 2 {
-                let peer_name = parts[1];
-                let key = kad::RecordKey::new(&peer_name);
-                let query_id = swarm.behaviour_mut().kademlia.get_record(key);
-
-                state.pending_connections.insert(query_id, swarm.local_peer_id().clone());
+                let peer_nickname = parts[1].to_string();
+                let reverse_key = kad::RecordKey::new(&format!("nickname:{}", peer_nickname));
+                let query_id = swarm.behaviour_mut().kademlia.get_record(reverse_key);
+                state.pending_connections.insert(query_id, ConnectionRequest::NicknameLookup);
             } else {
                 println!("Usage: /connect <peer nickname>");
             }

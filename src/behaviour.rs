@@ -1,16 +1,23 @@
 use serde::{Deserialize, Serialize};
 use libp2p::{
-    gossipsub, kad::{self, store::MemoryStore, QueryId, QueryResult}, mdns, request_response::{self, ProtocolSupport}, swarm::NetworkBehaviour, PeerId, StreamProtocol
+    gossipsub::{self, IdentTopic}, kad::{self, store::MemoryStore, QueryId, QueryResult}, mdns, request_response::{self, ProtocolSupport}, swarm::NetworkBehaviour, PeerId, StreamProtocol
 };
-use tokio::{fs::File, io::{AsyncReadExt, AsyncWriteExt}};
+use tokio::{fs::File, io::{self, AsyncReadExt, AsyncWriteExt}};
+use uuid::Uuid;
+use crate::util::{ChatState, ConnectionRequest, Invite, PeerData, PrivateRoomProtocol};
 
-use crate::util::{ChatState, PeerData};
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FileRequest(pub String);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FileResponse(pub Vec<u8>);
+pub enum ResponseType {
+    FileResponse(Vec<u8>),
+    PrivateRoomResponse(PrivateRoomProtocol),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RequestType {
+    FileRequest(String),
+    PrivateRoomRequest(Invite),
+}
 
 #[derive(NetworkBehaviour)]
 pub struct ChatBehaviour {
@@ -20,7 +27,7 @@ pub struct ChatBehaviour {
 
 #[derive(NetworkBehaviour)]
 pub struct RequestResponseBehaviour {
-    pub request_response: request_response::cbor::Behaviour<FileRequest, FileResponse>,
+    pub request_response: request_response::cbor::Behaviour<RequestType, ResponseType>,
 }
 
 #[derive(NetworkBehaviour)]
@@ -77,7 +84,7 @@ pub async fn handle_chat_event(chat_event: ChatBehaviourEvent, state: &mut ChatS
             message_id: _id,
             message,
         }) => {
-            let key = kad::RecordKey::new(&peer_id.to_string());
+            let key = kad::RecordKey::new(&peer_id.to_bytes());
             let query_id = swarm.behaviour_mut().kademlia.get_record(key);
 
             // Store message data and query ID for later processing
@@ -106,15 +113,50 @@ pub async fn handle_kademlia_event(id: QueryId, result: QueryResult, state: &mut
                         println!("Peer {peer_id}: {}", String::from_utf8_lossy(&msg));
                     }
                 }
-            } else if let Some(peer_id) = state.pending_connections.remove(&id) {
-                let private_key = libp2p::identity::Keypair::generate_ed25519();
-                let peer_id = PeerId::from(private_key.public());
-                swarm.behaviour_mut().chat.gossipsub.subscribe()?;
-
+            } else if let Some(request_type) = state.pending_connections.remove(&id) {
+                match request_type {
+                    ConnectionRequest::NicknameLookup => {
+                        match PeerId::from_bytes(&peer_record.record.value) {
+                            Ok(peer_id) => {
+                                // Check if the peer ID is not the same as the local peer ID
+                                if peer_id == *swarm.local_peer_id() {
+                                    println!("You cannot connect to yourself.");
+                                    return;
+                                }
+                                let peer_data_key = kad::RecordKey::new(&peer_id.to_bytes());
+                                let data_query_id = swarm.behaviour_mut().kademlia.get_record(peer_data_key);
+                                state.pending_connections.insert(data_query_id, ConnectionRequest::PeerData(peer_id));
+                            }
+                            Err(e) => {
+                                println!("Invalid Peer ID in record: {:?}\nRaw bytes: {:?}",
+                                    e,
+                                    peer_record.record.value
+                                );
+                            }
+                        }
+                    },
+                    ConnectionRequest::PeerData(peer_id) => {
+                        match serde_json::from_slice::<PeerData>(&peer_record.record.value) {
+                            Ok(peer) => {
+                                let room_id = Uuid::new_v4().to_string();
+                                swarm.behaviour_mut().request_response.request_response.send_request(
+                                    &peer_id,
+                                    RequestType::PrivateRoomRequest(Invite {
+                                        room_id: room_id.clone(),
+                                        initiator_nickname: peer.nickname.clone(),
+                                    })
+                                );
+                                println!("Private room request sent to {} ( {}★ ). You will automatically connect if they accept", peer.nickname, peer.rating);
+                            }
+                            Err(e) => println!("Invalid peer data for {}: {}", peer_id, e),
+                        }
+                    },
+                }
             }
         },
 
         kad::QueryResult::GetRecord(Err(kad::GetRecordError::NotFound { .. })) => {
+            println!("No peer found with that nickname.");
             if let Some((peer_id, msg)) = state.pending_messages.remove(&id) {
                 println!("Peer {peer_id}: {}", String::from_utf8_lossy(&msg));
             }
@@ -131,12 +173,12 @@ pub async fn handle_kademlia_event(id: QueryId, result: QueryResult, state: &mut
     }
 }
 
-pub async fn handle_file_event(request_response_event: request_response::Event<FileRequest, FileResponse>, swarm: &mut libp2p::Swarm<SwapBytesBehaviour>) {
+pub async fn handle_req_res_event(request_response_event: request_response::Event<RequestType, ResponseType>, swarm: &mut libp2p::Swarm<SwapBytesBehaviour>, stdin: &mut io::Lines<io::BufReader<io::Stdin>>, topic: &mut gossipsub::IdentTopic) {
     match request_response_event {
         request_response::Event::Message {message, ..} => match message {
-            request_response::Message::Request {request, channel, ..} => {
-                // A request has been received
-                let filename = request.0;
+            request_response::Message::Request { request: RequestType::FileRequest(filename), channel, .. } => {
+                // A file request has been received
+                println!("Received file request for: {}", filename);
                 let file_bytes = match File::open(filename).await {
                     Ok(mut file) => {
                         let mut buffer = Vec::new();
@@ -150,25 +192,86 @@ pub async fn handle_file_event(request_response_event: request_response::Event<F
                     Err(_) => vec![],
                 };
                 // Send the response to the file requester
-                swarm.behaviour_mut().request_response.request_response.send_response(channel, FileResponse(file_bytes)).unwrap();
-            }
+                swarm.behaviour_mut().request_response.request_response.send_response(channel, ResponseType::FileResponse(file_bytes)).unwrap();
+            },
 
-            request_response::Message::Response {response, request_id } => {
-                println!("response {:?}", response);
+            request_response::Message::Request { request: RequestType::PrivateRoomRequest(Invite { room_id, initiator_nickname }), channel, .. } => {
+                // Handle private room request
+                println!("Received private room request from {initiator_nickname}");
+                // Ask user to accept or reject the request
+                println!("Do you accept the private room request? (y/n)");
+                let response ;
+                loop {
+                    match stdin.next_line().await {
+                        Ok(Some(line)) => {
+                            let trimmed = line.trim();
+                            if trimmed == "y" || trimmed == "n" {
+                                response = trimmed.to_string();
+                                break;
+                            } else {
+                                println!("Invalid input. Please enter 'y' or 'n'.");
+                            }
+                        }
+                        Ok(None) => {
+                            println!("No input received. Please try again.");
+                        }
+                        Err(e) => {
+                            println!("Error reading input: {}. Please try again.", e);
+                        }
+                    }
+                }
+                let private_room_response;
+                if response == "y" {
+                    private_room_response = PrivateRoomProtocol::Accept(room_id.clone());
+                    // Connect to the private room topic
+                    // Unsubscribe from the default topic
+                    let default_topic = gossipsub::IdentTopic::new("default"); // or your current topic name
+                    swarm.behaviour_mut().chat.gossipsub.unsubscribe(&default_topic);
+                    // Subscribe to the private room topic
+                    let private_topic = IdentTopic::new(format!("private/{room_id}"));
+                    swarm.behaviour_mut().chat.gossipsub.subscribe(&private_topic).unwrap();
+                    *topic = private_topic.clone();
+                    println!("You have joined the private room: {room_id}");
+                } else {
+                    private_room_response = PrivateRoomProtocol::Reject(room_id.clone());
+                };
+                // Send the response back to the requester
+                swarm.behaviour_mut().request_response.request_response.send_response(channel, ResponseType::PrivateRoomResponse(private_room_response))
+                .expect("Failed to send private room response");
+            },
+
+            request_response::Message::Response {response: ResponseType::FileResponse(file_data), request_id } => {
+                println!("response {:?}", file_data);
                 // Save the response to a file
                 let filename = format!("received_file_{}", request_id);
                 let mut file = File::create(filename).await.unwrap();
-                if let Err(e) = file.write_all(&response.0).await {
+                if let Err(e) = file.write_all(&file_data).await {
                     println!("Failed to write file: {:?}", e);
                 } else {
                     println!("File received and saved successfully.");
+                }
+            },
+
+            request_response::Message::Response {response: ResponseType::PrivateRoomResponse(protocol), .. } => {
+                if let PrivateRoomProtocol::Reject(_room_id) = protocol {
+                    println!("Private room request rejected.");
+                } else if let PrivateRoomProtocol::Accept(room_id) = protocol {
+                    // Connect to the private room topic
+                    // Unsubscribe from the default topic
+                    let default_topic = gossipsub::IdentTopic::new("default"); // or your current topic name
+                    swarm.behaviour_mut().chat.gossipsub.unsubscribe(&default_topic);
+                    // Subscribe to the private room topic
+                    let private_topic = IdentTopic::new(format!("private/{room_id}"));
+                    swarm.behaviour_mut().chat.gossipsub.subscribe(&private_topic).unwrap();
+                    *topic = private_topic.clone();
+                    println!("You have joined the private room: {room_id}");
                 }
             }
         },
 
         // outgoing request fails to be sent
-        request_response::Event::OutboundFailure {peer,request_id, error, .. } => {
-            println!("Request {:?} to peer {:?} failed to send: {:?}", request_id, peer, error);
+        request_response::Event::OutboundFailure {request_id, error, .. } => {
+            println!("Request {:?} failed to send: {:?}", request_id, error);
         },
 
         // incoming request fails to be processed
@@ -176,9 +279,9 @@ pub async fn handle_file_event(request_response_event: request_response::Event<F
             println!("Request {:?} from peer {:?} failed to be read: {:?}", request_id, peer, error);
         },
 
-        // outgoing request is successfully sent
-        request_response::Event::ResponseSent {peer, request_id, .. } => {
-            println!("Request {:?} to peer {:?} has been successfully sent.", request_id, peer);
+        // outgoing response is successfully sent
+        request_response::Event::ResponseSent { .. } => {
+            // Dont send anything here
         },
     }
 }

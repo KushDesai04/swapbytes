@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use clap::Parser;
 use libp2p::{ kad, Multiaddr, PeerId };
-use serde::{ser, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use tokio::io;
 
 use crate::behaviour::SwapBytesBehaviour;
@@ -15,9 +15,13 @@ pub struct Cli {
     #[arg(long)]
     pub peer: Option<Multiaddr>,
 }
+pub enum ConnectionRequest {
+    NicknameLookup,
+    PeerData(PeerId),
+}
 pub struct ChatState {
     pub pending_messages: HashMap<kad::QueryId, (PeerId, Vec<u8>)>,
-    pub pending_connections: HashMap<kad::QueryId, PeerId>,
+    pub pending_connections: HashMap<kad::QueryId, ConnectionRequest>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -26,9 +30,22 @@ pub struct PeerData {
     pub rating: i32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Invite {  // New struct for the invite data
+    pub room_id: String,
+    pub initiator_nickname: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PrivateRoomProtocol {
+    Invite(Invite),
+    Accept(String),
+    Reject(String),
+}
+
 pub async fn get_and_save_nickname(
     stdin: &mut io::Lines<io::BufReader<io::Stdin>>,
-    peer_id: &String,
+    peer_id: Vec<u8>,
     swarm: &mut libp2p::Swarm<SwapBytesBehaviour>
 ) {
     let nickname;
@@ -62,7 +79,7 @@ pub async fn get_and_save_nickname(
     let serialized = serde_json::to_vec(&peer_data).expect("Serialization failed");
 
     let nickname_record = kad::Record {
-        key: kad::RecordKey::new(peer_id),
+        key: kad::RecordKey::new(&peer_id),
         value: serialized,
         publisher: None,
         expires: None,
@@ -74,10 +91,12 @@ pub async fn get_and_save_nickname(
         .expect("Failed to store record locally.");
 
     // Storing nickname: peer record - uses double the storage but allows for easy lookup
-    let reverse_key = kad::RecordKey::new(&nickname);
+    let reverse_key = kad::RecordKey::new(
+        &format!("nickname:{}", nickname).as_bytes()
+    );
     let reverse_record = kad::Record {
         key: reverse_key,
-        value: peer_id.to_string().into_bytes(),
+        value: peer_id,
         publisher: None,
         expires: None,
     };

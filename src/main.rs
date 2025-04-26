@@ -5,7 +5,7 @@ mod input;
 use futures::StreamExt;
 use util::{ Cli, get_and_save_nickname, ChatState };
 use input::handle_input;
-use behaviour::{create_swapbytes_behaviour, handle_chat_event, handle_file_event, handle_kademlia_event, RequestResponseBehaviourEvent, SwapBytesBehaviourEvent};
+use behaviour::{create_swapbytes_behaviour, handle_chat_event, handle_kademlia_event, handle_req_res_event, RequestResponseBehaviourEvent, SwapBytesBehaviourEvent};
 use clap::Parser;
 use libp2p::{ gossipsub, kad, noise, swarm::SwarmEvent, tcp, yamux };
 use std::{ collections::HashMap, error::Error, time::Duration };
@@ -53,8 +53,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         swarm.dial(peer).unwrap();
     }
 
-    let peer_id = swarm.local_peer_id().to_string().clone();
-    get_and_save_nickname(&mut stdin, &peer_id, &mut swarm).await;
+    let peer_id = swarm.local_peer_id().to_bytes();
+    get_and_save_nickname(&mut stdin, peer_id, &mut swarm).await;
 
     loop {
         select! {
@@ -77,7 +77,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
                 // Handle all file exchange events
                 SwarmEvent::Behaviour(SwapBytesBehaviourEvent::RequestResponse(RequestResponseBehaviourEvent::RequestResponse(request_response_event))) => {
-                    handle_file_event(request_response_event, &mut swarm).await;
+                    handle_req_res_event(request_response_event, &mut swarm, &mut stdin, &mut topic).await;
                 },
 
                 _ => {}
