@@ -8,7 +8,6 @@ use tokio::{fs::File, io::{self, AsyncReadExt, AsyncWriteExt}};
 use uuid::Uuid;
 use crate::util::{ChatState, ConnectionRequest, Invite, PeerData, PrivateRoomProtocol};
 
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ResponseType {
     FileResponse(Vec<u8>),
@@ -53,13 +52,9 @@ pub fn create_swapbytes_behaviour(key: &libp2p::identity::Keypair) -> Result<Swa
         )], request_response::Config::default()),
     };
 
-    let mut kademlia_behaviour = kad::Behaviour::new(
-                                                    key.public().to_peer_id(),
-                                                MemoryStore::new(key.public().to_peer_id()));
-    kademlia_behaviour.set_mode(Some(Mode::Server));
-    kademlia_behaviour.add_address(
-        &PeerId::from_str("QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN")?,
-        "/dnsaddr/bootstrap.libp2p.io".parse()?
+    let kademlia_behaviour = kad::Behaviour::new(
+        key.public().to_peer_id(),
+        MemoryStore::new(key.public().to_peer_id()),
     );
 
     Ok(SwapBytesBehaviour {
@@ -120,9 +115,32 @@ pub async fn handle_kademlia_event(id: QueryId, result: QueryResult, state: &mut
                         println!("Peer {peer_id}: {}", String::from_utf8_lossy(&msg));
                     }
                 }
+            } else if let Some(rating) = state.pending_rating_update.remove(&id) {
+                match serde_json::from_slice::<PeerData>(&peer_record.record.value) {
+                    Ok(peer) => {
+                        // Update the peer's rating in the local store
+                        let updated_peer = PeerData {
+                            nickname: peer.nickname.clone(),
+                            rating: peer.rating + rating,
+                        };
+                        let serialized = serde_json::to_vec(&updated_peer).expect("Serialization failed");
+                        let updated_record = kad::Record {
+                            key: peer_record.record.key,
+                            value: serialized,
+                            publisher: None,
+                            expires: None,
+                        };
+                        // Store the updated record in the DHT
+                        swarm.behaviour_mut().kademlia.put_record(updated_record, kad::Quorum::All).expect("Failed to store updated record locally.");
+                        println!("Updated rating for {}: {}★", peer.nickname, updated_peer.rating);
+                    }
+                    Err(_) => {
+                        println!("Error retrieving peer data for rating update: {}", String::from_utf8_lossy(&peer_record.record.value));
+                    }
+                }
             } else if let Some(request_type) = state.pending_connections.remove(&id) {
                 match request_type {
-                    ConnectionRequest::NicknameLookup => {
+                    ConnectionRequest::NicknameLookup(initiator_nickname, initiator_peer_id) => {
                         match PeerId::from_bytes(&peer_record.record.value) {
                             Ok(peer_id) => {
                                 // Check if the peer ID is not the same as the local peer ID
@@ -132,7 +150,7 @@ pub async fn handle_kademlia_event(id: QueryId, result: QueryResult, state: &mut
                                 }
                                 let peer_data_key = kad::RecordKey::new(&peer_id.to_bytes());
                                 let data_query_id = swarm.behaviour_mut().kademlia.get_record(peer_data_key);
-                                state.pending_connections.insert(data_query_id, ConnectionRequest::PeerData(peer_id));
+                                state.pending_connections.insert(data_query_id, ConnectionRequest::PeerData(peer_id, initiator_nickname, initiator_peer_id));
                             }
                             Err(e) => {
                                 println!("Invalid Peer ID in record: {:?}\nRaw bytes: {:?}",
@@ -142,20 +160,20 @@ pub async fn handle_kademlia_event(id: QueryId, result: QueryResult, state: &mut
                             }
                         }
                     },
-                    ConnectionRequest::PeerData(peer_id) => {
+                    ConnectionRequest::PeerData(other_peer_id, initiator_nickname, initiator_peer_id) => {
                         match serde_json::from_slice::<PeerData>(&peer_record.record.value) {
                             Ok(peer) => {
-                                let room_id = Uuid::new_v4().to_string();
+                                let room_id = format!("{}-{}-{}-{}-{}",initiator_nickname.clone(), peer.nickname.clone(), initiator_peer_id, other_peer_id, Uuid::new_v4().to_string());
                                 swarm.behaviour_mut().request_response.request_response.send_request(
-                                    &peer_id,
+                                    &other_peer_id,
                                     RequestType::PrivateRoomRequest(Invite {
                                         room_id: room_id.clone(),
-                                        initiator_nickname: peer.nickname.clone(),
+                                        initiator_nickname: initiator_nickname.clone(),
                                     })
                                 );
-                                println!("Private room request sent to {} ( {}★ ). You will automatically connect if they accept", peer.nickname, peer.rating);
+                                println!("Private room request sent to {}. You will automatically connect if they accept", peer.nickname);
                             }
-                            Err(e) => println!("Invalid peer data for {}: {}", peer_id, e),
+                            Err(e) => println!("Invalid peer data for {}: {}", other_peer_id, e),
                         }
                     },
                 }
@@ -163,7 +181,7 @@ pub async fn handle_kademlia_event(id: QueryId, result: QueryResult, state: &mut
         },
 
         kad::QueryResult::GetRecord(Err(kad::GetRecordError::NotFound { .. })) => {
-            println!("No peer found with that nickname.");
+            println!("Error finding peer record.");
             if let Some((peer_id, msg)) = state.pending_messages.remove(&id) {
                 println!("Peer {peer_id}: {}", String::from_utf8_lossy(&msg));
             }
@@ -235,7 +253,7 @@ pub async fn handle_req_res_event(request_response_event: request_response::Even
                     let default_topic = gossipsub::IdentTopic::new("default"); // or your current topic name
                     swarm.behaviour_mut().chat.gossipsub.unsubscribe(&default_topic);
                     // Subscribe to the private room topic
-                    let private_topic = IdentTopic::new(format!("private/{room_id}"));
+                    let private_topic = IdentTopic::new(format!("{room_id}"));
                     swarm.behaviour_mut().chat.gossipsub.subscribe(&private_topic).unwrap();
                     *topic = private_topic.clone();
                     println!("You have joined the private room: {room_id}. To leave, type /leave.");
@@ -268,7 +286,7 @@ pub async fn handle_req_res_event(request_response_event: request_response::Even
                     let default_topic = gossipsub::IdentTopic::new("default"); // or your current topic name
                     swarm.behaviour_mut().chat.gossipsub.unsubscribe(&default_topic);
                     // Subscribe to the private room topic
-                    let private_topic = IdentTopic::new(format!("private/{room_id}"));
+                        let private_topic = IdentTopic::new(format!("{room_id}"));
                     swarm.behaviour_mut().chat.gossipsub.subscribe(&private_topic).unwrap();
                     *topic = private_topic.clone();
                     println!("You have joined the private room: {room_id}. To leave, type /leave.");

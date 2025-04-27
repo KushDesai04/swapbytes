@@ -16,12 +16,13 @@ pub struct Cli {
     pub peer: Option<Multiaddr>,
 }
 pub enum ConnectionRequest {
-    NicknameLookup,
-    PeerData(PeerId),
+    NicknameLookup(String, PeerId),
+    PeerData(PeerId, String, PeerId),
 }
 pub struct ChatState {
     pub pending_messages: HashMap<kad::QueryId, (PeerId, Vec<u8>)>,
     pub pending_connections: HashMap<kad::QueryId, ConnectionRequest>,
+    pub pending_rating_update: HashMap<kad::QueryId, i32>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -45,7 +46,7 @@ pub enum PrivateRoomProtocol {
 
 pub async fn get_and_save_nickname(
     stdin: &mut io::Lines<io::BufReader<io::Stdin>>,
-    peer_id: Vec<u8>,
+    peer_id: &PeerId,
     swarm: &mut libp2p::Swarm<SwapBytesBehaviour>
 ) -> String{
     let nickname;
@@ -79,7 +80,7 @@ pub async fn get_and_save_nickname(
     let serialized = serde_json::to_vec(&peer_data).expect("Serialization failed");
 
     let nickname_record = kad::Record {
-        key: kad::RecordKey::new(&peer_id),
+        key: kad::RecordKey::new(&peer_id.to_bytes()),
         value: serialized,
         publisher: None,
         expires: None,
@@ -87,7 +88,7 @@ pub async fn get_and_save_nickname(
 
     swarm
         .behaviour_mut()
-        .kademlia.put_record(nickname_record, kad::Quorum::One)
+        .kademlia.put_record(nickname_record, kad::Quorum::All)
         .expect("Failed to store record locally.");
 
     // Storing nickname: peer record - uses double the storage but allows for easy lookup
@@ -96,13 +97,25 @@ pub async fn get_and_save_nickname(
     );
     let reverse_record = kad::Record {
         key: reverse_key,
-        value: peer_id,
+        value: peer_id.to_bytes().to_vec(),
         publisher: None,
         expires: None,
     };
     swarm
         .behaviour_mut()
-        .kademlia.put_record(reverse_record, kad::Quorum::One)
+        .kademlia.put_record(reverse_record, kad::Quorum::All)
         .expect("Failed to store reverse record locally.");
     nickname
+}
+
+
+pub async fn update_peer_rating(
+    swarm: &mut libp2p::Swarm<SwapBytesBehaviour>,
+    peer_id: PeerId,
+    rating: i32,
+    state: &mut ChatState,
+) {
+    let reverse_key = kad::RecordKey::new(&peer_id.to_bytes());
+    let query_id = swarm.behaviour_mut().kademlia.get_record(reverse_key);
+    state.pending_rating_update.insert(query_id, rating);
 }
