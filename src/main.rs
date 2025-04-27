@@ -31,6 +31,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         pending_messages: HashMap::new(),
         pending_connections: HashMap::new(),
         pending_rating_update: HashMap::new(),
+        pending_file_requests: HashMap::new(),
+        pending_file_offers: HashMap::new(),
     };
 
     // Creates a chatroom to be used by all connected peers by default

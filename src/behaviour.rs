@@ -9,13 +9,13 @@ use crate::util::{ChatState, ConnectionRequest, Invite, PeerData, PrivateRoomPro
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ResponseType {
-    FileResponse(Vec<u8>),
+    FileResponse(Vec<u8>, String),
     PrivateRoomResponse(PrivateRoomProtocol),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RequestType {
-    FileRequest(String),
+    FileRequest(String, PeerId),
     PrivateRoomRequest(Invite),
 }
 
@@ -199,23 +199,56 @@ pub async fn handle_kademlia_event(id: QueryId, result: QueryResult, state: &mut
 pub async fn handle_req_res_event(request_response_event: request_response::Event<RequestType, ResponseType>, swarm: &mut libp2p::Swarm<SwapBytesBehaviour>, stdin: &mut io::Lines<io::BufReader<io::Stdin>>, topic: &mut gossipsub::IdentTopic) {
     match request_response_event {
         request_response::Event::Message {message, ..} => match message {
-            request_response::Message::Request { request: RequestType::FileRequest(filename), channel, .. } => {
+            request_response::Message::Request { request: RequestType::FileRequest(filename, _requested_peer_id), channel, .. } => {
                 // A file request has been received
                 println!("Received file request for: {}", filename);
-                let file_bytes = match File::open(filename).await {
-                    Ok(mut file) => {
-                        let mut buffer = Vec::new();
-                        // Read the file into a buffer
-                        if let Err(e) = file.read_to_end(&mut buffer).await {
-                            println!("Failed to read file: {:?}", e);
+                println!("Do you want to send the file? (y/n)");
+                let response;
+                loop {
+                    match stdin.next_line().await {
+                        Ok(Some(line)) => {
+                            let trimmed = line.trim();
+                            if trimmed == "y" || trimmed == "n" {
+                                response = trimmed.to_string();
+                                break;
+                            } else {
+                                println!("Invalid input. Please enter 'y' or 'n'.");
+                            }
                         }
-                        buffer
+                        Ok(None) => {
+                            println!("No input received. Please try again.");
+                        }
+                        Err(e) => {
+                            println!("Error reading input: {}. Please try again.", e);
+                        }
                     }
-                    // If the file doesn't exist send an empty vector
-                    Err(_) => vec![],
-                };
-                // Send the response to the file requester
-                swarm.behaviour_mut().request_response.request_response.send_response(channel, ResponseType::FileResponse(file_bytes)).unwrap();
+                }
+                if response == "n" {
+                    // Send a rejection response
+                    swarm.behaviour_mut().request_response.request_response.send_response(channel, ResponseType::FileResponse(vec![], String::new())).unwrap();
+                } else {
+                    // If the user accepts, read the file and send it
+                    match File::open(filename.clone()).await {
+                        Ok(mut file) => {
+                            let mut buffer = Vec::new();
+                            // Read the file into a buffer
+                            if let Err(e) = file.read_to_end(&mut buffer).await {
+                                println!("Failed to read file: {:?}", e);
+                            }
+                            // Send the response to the file requester
+                            swarm.behaviour_mut().request_response.request_response.send_response(channel, ResponseType::FileResponse(buffer, filename))
+                            .expect("Failed to send file response");
+                        }
+                        // If the file doesn't exist send an empty vector
+                        Err(_) => {
+                            println!("File not found. Sending empty response.");
+                            swarm.behaviour_mut().request_response.request_response.send_response(channel, ResponseType::FileResponse(vec![], String::new()))
+                            .expect("Failed to send file response");
+                        }
+                    };
+                }
+
+
             },
 
             request_response::Message::Request { request: RequestType::PrivateRoomRequest(Invite { room_id, initiator_nickname }), channel, .. } => {
@@ -263,10 +296,14 @@ pub async fn handle_req_res_event(request_response_event: request_response::Even
                 .expect("Failed to send private room response");
             },
 
-            request_response::Message::Response {response: ResponseType::FileResponse(file_data), request_id } => {
-                println!("response {:?}", file_data);
+            request_response::Message::Response {response: ResponseType::FileResponse(file_data, filename), request_id } => {
+                if file_data.is_empty() {
+                    println!("File request was rejected or file not found.");
+                    return;
+                }
+                println!("Received file {:?}", file_data);
                 // Save the response to a file
-                let filename = format!("received_file_{}", request_id);
+                let filename = format!("received_file_{}_{}", filename, request_id);
                 let mut file = File::create(filename).await.unwrap();
                 if let Err(e) = file.write_all(&file_data).await {
                     println!("Failed to write file: {:?}", e);
