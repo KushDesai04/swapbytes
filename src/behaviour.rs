@@ -10,12 +10,14 @@ use crate::util::{ChatState, ConnectionRequest, Invite, PeerData, PrivateRoomPro
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ResponseType {
     FileResponse(Vec<u8>, String),
+    FileOfferResponse(bool),
     PrivateRoomResponse(PrivateRoomProtocol),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RequestType {
     FileRequest(String, PeerId),
+    FileOffer(Vec<u8>, String),
     PrivateRoomRequest(Invite),
 }
 
@@ -247,8 +249,45 @@ pub async fn handle_req_res_event(request_response_event: request_response::Even
                         }
                     };
                 }
+            },
 
-
+            request_response::Message::Request { request: RequestType::FileOffer(file_data, filename), channel, .. } => {
+                // A file request has been received
+                println!("Received file offer for: {}", filename);
+                println!("Do you want the file? (y/n)");
+                let response;
+                loop {
+                    match stdin.next_line().await {
+                        Ok(Some(line)) => {
+                            let trimmed = line.trim();
+                            if trimmed == "y" || trimmed == "n" {
+                                response = trimmed.to_string();
+                                break;
+                            } else {
+                                println!("Invalid input. Please enter 'y' or 'n'.");
+                            }
+                        }
+                        Ok(None) => {
+                            println!("No input received. Please try again.");
+                        }
+                        Err(e) => {
+                            println!("Error reading input: {}. Please try again.", e);
+                        }
+                    }
+                }
+                if response == "n" {
+                    // Send a rejection response
+                    swarm.behaviour_mut().request_response.request_response.send_response(channel, ResponseType::FileOfferResponse(false));
+                } else {
+                    swarm.behaviour_mut().request_response.request_response.send_response(channel, ResponseType::FileOfferResponse(true));
+                    let filename = format!("received_file_{}", filename);
+                    let mut file = File::create(filename).await.unwrap();
+                    if let Err(e) = file.write_all(&file_data).await {
+                        println!("Failed to write file: {:?}", e);
+                    } else {
+                        println!("File received and saved successfully.");
+                    }
+                }
             },
 
             request_response::Message::Request { request: RequestType::PrivateRoomRequest(Invite { room_id, initiator_nickname }), channel, .. } => {
@@ -311,6 +350,14 @@ pub async fn handle_req_res_event(request_response_event: request_response::Even
                     println!("File received and saved successfully.");
                 }
             },
+
+            request_response::Message::Response {response: ResponseType::FileOfferResponse(offer_accepted), request_id } => {
+                if offer_accepted {
+                    println!("File offer accepted.");
+                } else {
+                    println!("File offer rejected.");
+                }
+            }
 
             request_response::Message::Response {response: ResponseType::PrivateRoomResponse(protocol), .. } => {
                 if let PrivateRoomProtocol::Reject(_room_id) = protocol {
