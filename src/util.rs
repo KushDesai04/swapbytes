@@ -46,7 +46,7 @@ pub enum PrivateRoomProtocol {
 
 pub async fn get_and_save_nickname(
     stdin: &mut io::Lines<io::BufReader<io::Stdin>>,
-    peer_id: &PeerId,
+    peer_id: PeerId,
     swarm: &mut libp2p::Swarm<SwapBytesBehaviour>
 ) -> String{
     let nickname;
@@ -107,7 +107,6 @@ pub async fn get_and_save_nickname(
         .expect("Failed to store reverse record locally.");
     nickname
 }
-
 
 pub async fn update_peer_rating(
     swarm: &mut libp2p::Swarm<SwapBytesBehaviour>,

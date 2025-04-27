@@ -1,5 +1,4 @@
 use std::str::FromStr;
-
 use libp2p::{gossipsub::{self, TopicHash}, kad};
 use tokio::io;
 
@@ -27,17 +26,26 @@ pub async fn handle_input(line: &str, swarm: &mut libp2p::Swarm<SwapBytesBehavio
                 /leave - leave the current chatroom\n
                 <message>");
             }
-
         },
 
-        // this is for /connect <peer>
+        "/list" => {
+            println!("Connected peers: {:?}", swarm.connected_peers().collect::<Vec<_>>());
+        },
+
+        // /connect <peer>
         val if val.starts_with("/connect") => {
+            // check that the user is not already in a private room
+            let topic_hash: TopicHash = topic.hash().clone();
+            if topic_hash.as_str() != "default" {
+                println!("You are already in a private room. Please leave the room before connecting to another peer.");
+                return;
+            }
+            // get the other peer's nickname that is connected to the current topic
             let parts: Vec<&str> = val.split_whitespace().collect();
             if parts.len() == 2 {
                 let peer_nickname = parts[1].to_string();
                 let reverse_key = kad::RecordKey::new(&format!("nickname:{}", peer_nickname));
                 let query_id = swarm.behaviour_mut().kademlia.get_record(reverse_key);
-                // Send NicknameLookup request to the peer with your own nickname
                 state.pending_connections.insert(query_id, ConnectionRequest::NicknameLookup(own_nickname.clone(), swarm.local_peer_id().clone()));
             } else {
                 println!("Usage: /connect <peer nickname>");
@@ -46,8 +54,6 @@ pub async fn handle_input(line: &str, swarm: &mut libp2p::Swarm<SwapBytesBehavio
 
         "/leave" => {
             // get the other peer's nickname that is connected to the current topic
-
-
             let topic_hash: TopicHash = topic.hash().clone();
             if topic_hash.as_str() != "default" {
                 //split the topic hash to get the other peer's nickname
@@ -58,10 +64,10 @@ pub async fn handle_input(line: &str, swarm: &mut libp2p::Swarm<SwapBytesBehavio
                 let other_peer_id;
                 if nickname1 == own_nickname {
                     other_peer_nickname = nickname2;
-                    other_peer_id = parts[2];
+                    other_peer_id = parts[3];
                 } else {
                     other_peer_nickname = nickname1;
-                    other_peer_id = parts[3];
+                    other_peer_id = parts[2];
                 }
                 // send a leave message to the other peer
                 println!("Please rate {} before leaving the chatroom: -1, 0, 1", other_peer_nickname);
@@ -74,8 +80,8 @@ pub async fn handle_input(line: &str, swarm: &mut libp2p::Swarm<SwapBytesBehavio
                                 if rating == "-1" || rating == "0" || rating == "1" {
                                     // update the rating of the other peer in the Kademlia routing table
                                     if let Ok(parsed_rating) = rating.parse::<i32>() {
-                                        if let Ok(peer_id) = libp2p::PeerId::from_str(other_peer_id) {
-                                            update_peer_rating(swarm, peer_id, parsed_rating, state).await;
+                                        if let Ok(other_peer_id) = libp2p::PeerId::from_str(other_peer_id) {
+                                            update_peer_rating(swarm, other_peer_id, parsed_rating, state).await;
                                         } else {
                                             println!("Failed to parse PeerId from the given string.");
                                         }
@@ -109,26 +115,9 @@ pub async fn handle_input(line: &str, swarm: &mut libp2p::Swarm<SwapBytesBehavio
             }
         },
 
-        "/list" => {
-            // list all the connected peers
-            let peers = swarm.connected_peers().collect::<Vec<_>>();
-            println!("Connected peers: {:?}", peers);
-        },
-        "/kademliaList" => {
-            // list all the connected peers in the Kademlia routing table
-            let peers = swarm.behaviour_mut().kademlia.kbuckets();
-            let peers_vec: Vec<_> = peers.map(|bucket| {
-                bucket.iter().map(|entry| entry.node.key.clone()).collect::<Vec<_>>()
-            }).collect::<Vec<_>>();
-            println!("Connected peers in Kademlia routing table: {:?}", peers_vec);
-        },
-
         _ => {
-            // Periodic querying from existing peers
-            let record_key = kad::RecordKey::new(&swarm.local_peer_id().to_bytes());
-            swarm.behaviour_mut().kademlia.get_record(record_key);
             if let Err(e) = swarm.behaviour_mut().chat.gossipsub.publish(topic.clone(), line.as_bytes()) {
-                println!("Publishing error: {:?}", e);
+                println!("Publish error: {:?}", e);
             }
         }
     }

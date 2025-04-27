@@ -1,12 +1,12 @@
 mod behaviour;
 mod util;
 mod input;
-use clap::Parser;
-use input::handle_input;
-use util::{ Cli, get_and_save_nickname, ChatState };
-use behaviour::{ create_swapbytes_behaviour, handle_chat_event, handle_kademlia_event, handle_req_res_event, RequestResponseBehaviourEvent, SwapBytesBehaviourEvent };
 
 use futures::StreamExt;
+use util::{ Cli, get_and_save_nickname, ChatState };
+use input::handle_input;
+use behaviour::{create_swapbytes_behaviour, handle_chat_event, handle_kademlia_event, handle_req_res_event, RequestResponseBehaviourEvent, SwapBytesBehaviourEvent};
+use clap::Parser;
 use libp2p::{ gossipsub, kad, noise, swarm::SwarmEvent, tcp, yamux };
 use std::{ collections::HashMap, error::Error, time::Duration };
 use tokio::{io::{ self, AsyncBufReadExt }, select};
@@ -37,6 +37,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut topic = gossipsub::IdentTopic::new("default");
 
     swarm.behaviour_mut().chat.gossipsub.subscribe(&topic)?;
+    swarm.behaviour_mut().kademlia.set_mode(Some(kad::Mode::Server));
 
     // Configures the peer to listen for incoming connection on tcp and udp over quic
     swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
@@ -54,7 +55,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let peer_id = *swarm.local_peer_id();
-    let nickname = get_and_save_nickname(&mut stdin, &peer_id, &mut swarm).await;
+    let nickname = get_and_save_nickname(&mut stdin, peer_id, &mut swarm).await;
 
     loop {
         select! {
@@ -63,9 +64,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
 
             event = swarm.select_next_some() => match event {
-                SwarmEvent::NewListenAddr { address, .. } => {
-                    println!("Your node is listening on {address}");
-                },
+                SwarmEvent::NewListenAddr { address, .. } => println!("Your node is listening on {address}"),
 
                 // Handle all chat events
                 SwarmEvent::Behaviour(SwapBytesBehaviourEvent::Chat(chat_event)) => {
@@ -81,23 +80,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 SwarmEvent::Behaviour(SwapBytesBehaviourEvent::RequestResponse(RequestResponseBehaviourEvent::RequestResponse(request_response_event))) => {
                     handle_req_res_event(request_response_event, &mut swarm, &mut stdin, &mut topic).await;
                 },
-
-                // Except this one Kademlia event that is not handled by the above function
-                SwarmEvent::Behaviour(SwapBytesBehaviourEvent::Kademlia(kad::Event::RoutingUpdated { .. })) => {
-                    println!("Updated routing table with new peers");
-                }
-
-                // // Is this required?
-                // SwarmEvent::ConnectionClosed {peer_id, ..} => {
-                //     // Remove from Kademlia routing table
-                //     swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
-                //     let key = kad::RecordKey::new(&peer_id.to_bytes());
-                //     swarm.behaviour_mut().kademlia.remove_record(&key);
-                //     let reverse_key = kad::RecordKey::new(
-                //         &format!("nickname:{}", nickname).as_bytes()
-                //     );
-                //     swarm.behaviour_mut().kademlia.remove_record(&reverse_key);
-                // }
 
                 _ => {}
             }

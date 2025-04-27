@@ -1,12 +1,11 @@
-use std::str::FromStr;
-
 use serde::{Deserialize, Serialize};
 use libp2p::{
-    gossipsub::{self, IdentTopic}, kad::{self, store::MemoryStore, Mode, QueryId, QueryResult}, mdns, request_response::{self, ProtocolSupport}, swarm::NetworkBehaviour, PeerId, StreamProtocol
+    gossipsub::{self, IdentTopic}, kad::{self, store::MemoryStore, QueryId, QueryResult}, mdns, request_response::{self, ProtocolSupport}, swarm::NetworkBehaviour, PeerId, StreamProtocol
 };
 use tokio::{fs::File, io::{self, AsyncReadExt, AsyncWriteExt}};
 use uuid::Uuid;
 use crate::util::{ChatState, ConnectionRequest, Invite, PeerData, PrivateRoomProtocol};
+
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ResponseType {
@@ -53,9 +52,8 @@ pub fn create_swapbytes_behaviour(key: &libp2p::identity::Keypair) -> Result<Swa
     };
 
     let kademlia_behaviour = kad::Behaviour::new(
-        key.public().to_peer_id(),
-        MemoryStore::new(key.public().to_peer_id()),
-    );
+                                                    key.public().to_peer_id(),
+                                                MemoryStore::new(key.public().to_peer_id()));
 
     Ok(SwapBytesBehaviour {
         chat: chat_behaviour,
@@ -115,29 +113,6 @@ pub async fn handle_kademlia_event(id: QueryId, result: QueryResult, state: &mut
                         println!("Peer {peer_id}: {}", String::from_utf8_lossy(&msg));
                     }
                 }
-            } else if let Some(rating) = state.pending_rating_update.remove(&id) {
-                match serde_json::from_slice::<PeerData>(&peer_record.record.value) {
-                    Ok(peer) => {
-                        // Update the peer's rating in the local store
-                        let updated_peer = PeerData {
-                            nickname: peer.nickname.clone(),
-                            rating: peer.rating + rating,
-                        };
-                        let serialized = serde_json::to_vec(&updated_peer).expect("Serialization failed");
-                        let updated_record = kad::Record {
-                            key: peer_record.record.key,
-                            value: serialized,
-                            publisher: None,
-                            expires: None,
-                        };
-                        // Store the updated record in the DHT
-                        swarm.behaviour_mut().kademlia.put_record(updated_record, kad::Quorum::All).expect("Failed to store updated record locally.");
-                        println!("Updated rating for {}: {}★", peer.nickname, updated_peer.rating);
-                    }
-                    Err(_) => {
-                        println!("Error retrieving peer data for rating update: {}", String::from_utf8_lossy(&peer_record.record.value));
-                    }
-                }
             } else if let Some(request_type) = state.pending_connections.remove(&id) {
                 match request_type {
                     ConnectionRequest::NicknameLookup(initiator_nickname, initiator_peer_id) => {
@@ -177,11 +152,34 @@ pub async fn handle_kademlia_event(id: QueryId, result: QueryResult, state: &mut
                         }
                     },
                 }
+            } else if let Some(rating) = state.pending_rating_update.remove(&id) {
+                match serde_json::from_slice::<PeerData>(&peer_record.record.value) {
+                    Ok(peer) => {
+                        // Update the peer's rating in the local store
+                        let updated_peer = PeerData {
+                            nickname: peer.nickname.clone(),
+                            rating: peer.rating + rating,
+                        };
+                        let serialized = serde_json::to_vec(&updated_peer).expect("Serialization failed");
+                        let updated_record = kad::Record {
+                            key: peer_record.record.key,
+                            value: serialized,
+                            publisher: None,
+                            expires: None,
+                        };
+                        // Store the updated record in the DHT
+                        swarm.behaviour_mut().kademlia.put_record(updated_record, kad::Quorum::All).expect("Failed to store updated record locally.");
+                        println!("Updated rating for {}: {}★", peer.nickname, updated_peer.rating);
+                    }
+                    Err(_) => {
+                        println!("Error retrieving peer data for rating update: {}", String::from_utf8_lossy(&peer_record.record.value));
+                    }
+                }
             }
         },
 
         kad::QueryResult::GetRecord(Err(kad::GetRecordError::NotFound { .. })) => {
-            println!("Error finding peer record.");
+            println!("No peer found with that nickname.");
             if let Some((peer_id, msg)) = state.pending_messages.remove(&id) {
                 println!("Peer {peer_id}: {}", String::from_utf8_lossy(&msg));
             }
@@ -256,7 +254,7 @@ pub async fn handle_req_res_event(request_response_event: request_response::Even
                     let private_topic = IdentTopic::new(format!("{room_id}"));
                     swarm.behaviour_mut().chat.gossipsub.subscribe(&private_topic).unwrap();
                     *topic = private_topic.clone();
-                    println!("You have joined the private room: {room_id}. To leave, type /leave.");
+                    println!("You have joined the private room: {room_id}");
                 } else {
                     private_room_response = PrivateRoomProtocol::Reject(room_id.clone());
                 };
@@ -286,10 +284,10 @@ pub async fn handle_req_res_event(request_response_event: request_response::Even
                     let default_topic = gossipsub::IdentTopic::new("default"); // or your current topic name
                     swarm.behaviour_mut().chat.gossipsub.unsubscribe(&default_topic);
                     // Subscribe to the private room topic
-                        let private_topic = IdentTopic::new(format!("{room_id}"));
+                    let private_topic = IdentTopic::new(format!("{room_id}"));
                     swarm.behaviour_mut().chat.gossipsub.subscribe(&private_topic).unwrap();
                     *topic = private_topic.clone();
-                    println!("You have joined the private room: {room_id}. To leave, type /leave.");
+                    println!("You have joined the private room: {room_id}");
                 }
             }
         },
