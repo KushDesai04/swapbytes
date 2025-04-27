@@ -16,13 +16,18 @@ pub async fn handle_input(line: &str, swarm: &mut libp2p::Swarm<SwapBytesBehavio
                 println!("Available commands:\n
                 /help - display a list of available commands\n
                 /exit - leave SwapBytes\n
-                /connect <peer nickname>\n
+                /connect <peer nickname> - invite a peer to a private room to request and offer files\n
+                /list - list connected peers\n
+
                 <message>");
             } else {
                 println!("Available commands:\n
                 /help - display a list of available commands\n
                 /exit - leave SwapBytes\n
-                /connect <peer nickname> - invite a peer to a private room\n
+                /connect <peer nickname> - invite a peer to a private room to request and offer files\n
+                /list - list connected peers\n
+                /request <file> - request a file from the other peer\n
+                /offer <file> - offer a file to the other peer\n
                 /leave - leave the current chatroom\n
                 <message>");
             }
