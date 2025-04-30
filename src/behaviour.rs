@@ -238,14 +238,18 @@ pub async fn handle_req_res_event(request_response_event: request_response::Even
                                 println!("Failed to read file: {:?}", e);
                             }
                             // Send the response to the file requester
-                            swarm.behaviour_mut().request_response.request_response.send_response(channel, ResponseType::FileResponse(buffer, filename))
-                            .expect("Failed to send file response");
+                            match swarm.behaviour_mut().request_response.request_response.send_response(channel, ResponseType::FileResponse(buffer, filename)) {
+                                Ok(()) => {},
+                                Err(e) => println!("Failed to send file response")
+                            }
                         }
                         // If the file doesn't exist send an empty vector
                         Err(_) => {
                             println!("File not found. Sending empty response.");
-                            swarm.behaviour_mut().request_response.request_response.send_response(channel, ResponseType::FileResponse(vec![], String::new()))
-                            .expect("Failed to send file response");
+                            match swarm.behaviour_mut().request_response.request_response.send_response(channel, ResponseType::FileResponse(vec![], String::new())) {
+                                Ok(()) => {},
+                                Err(e) => println!("Failed to send file response")
+                            }
                         }
                     };
                 }
@@ -277,16 +281,24 @@ pub async fn handle_req_res_event(request_response_event: request_response::Even
                 }
                 if response == "n" {
                     // Send a rejection response
-                    swarm.behaviour_mut().request_response.request_response.send_response(channel, ResponseType::FileOfferResponse(false));
-                } else {
-                    swarm.behaviour_mut().request_response.request_response.send_response(channel, ResponseType::FileOfferResponse(true));
-                    let filename = format!("received_file_{}", filename);
-                    let mut file = File::create(filename).await.unwrap();
-                    if let Err(e) = file.write_all(&file_data).await {
-                        println!("Failed to write file: {:?}", e);
-                    } else {
-                        println!("File received and saved successfully.");
+                    match swarm.behaviour_mut().request_response.request_response.send_response(channel, ResponseType::FileOfferResponse(false)) {
+                        Ok(()) => {},
+                        Err(e) => println!("Error sending rejection: {e:?}")
                     }
+                } else {
+                    match swarm.behaviour_mut().request_response.request_response.send_response(channel, ResponseType::FileOfferResponse(true)) {
+                        Ok(()) => {
+                            let filename = format!("received_file_{}", filename);
+                            let mut file = File::create(filename).await.unwrap();
+                            if let Err(e) = file.write_all(&file_data).await {
+                                println!("Failed to write file: {:?}", e);
+                            } else {
+                                println!("File received and saved successfully.");
+                            }
+                        },
+                        Err(e) => println!("Error sending rejection: {e:?}")
+                    }
+                    
                 }
             },
 
@@ -331,8 +343,16 @@ pub async fn handle_req_res_event(request_response_event: request_response::Even
                     private_room_response = PrivateRoomProtocol::Reject(room_id.clone());
                 };
                 // Send the response back to the requester
-                swarm.behaviour_mut().request_response.request_response.send_response(channel, ResponseType::PrivateRoomResponse(private_room_response))
-                .expect("Failed to send private room response");
+                match swarm.behaviour_mut().request_response.request_response.send_response(
+                    channel,
+                    ResponseType::PrivateRoomResponse(private_room_response),
+                ) {
+                    Ok(()) => {}
+                    Err(e) => {
+                        println!("Error sending response: {:?}", e);
+                    }
+                }
+                
             },
 
             request_response::Message::Response {response: ResponseType::FileResponse(file_data, filename), request_id } => {
@@ -343,11 +363,14 @@ pub async fn handle_req_res_event(request_response_event: request_response::Even
                 println!("Received file {:?}", file_data);
                 // Save the response to a file
                 let filename = format!("received_file_{}_{}", filename, request_id);
-                let mut file = File::create(filename).await.expect("Error saving the file");
-                if let Err(e) = file.write_all(&file_data).await {
-                    println!("Failed to write file: {:?}", e);
+                if let Ok(mut file) = File::create(filename).await {
+                    if let Err(e) = file.write_all(&file_data).await {
+                        println!("Failed to write file: {:?}", e);
+                    } else {
+                        println!("File received and saved successfully.");
+                    }
                 } else {
-                    println!("File received and saved successfully.");
+                    println!("Error saving file");
                 }
             },
 
