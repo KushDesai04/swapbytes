@@ -343,7 +343,7 @@ pub async fn handle_req_res_event(request_response_event: request_response::Even
                 println!("Received file {:?}", file_data);
                 // Save the response to a file
                 let filename = format!("received_file_{}_{}", filename, request_id);
-                let mut file = File::create(filename).await.unwrap();
+                let mut file = File::create(filename).await.expect("Error saving the file");
                 if let Err(e) = file.write_all(&file_data).await {
                     println!("Failed to write file: {:?}", e);
                 } else {
