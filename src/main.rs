@@ -7,9 +7,9 @@ use util::{ Cli, get_and_save_nickname, ChatState };
 use input::handle_input;
 use behaviour::{create_swapbytes_behaviour, handle_chat_event, handle_kademlia_event, handle_req_res_event, RequestResponseBehaviourEvent, SwapBytesBehaviourEvent};
 use clap::Parser;
-use libp2p::{ gossipsub, kad, noise, swarm::SwarmEvent, tcp, yamux };
+use libp2p::{ gossipsub, kad, noise, rendezvous, swarm::SwarmEvent, tcp, yamux, Multiaddr, PeerId };
 use std::{ collections::HashMap, error::Error, time::Duration };
-use tokio::{io::{ self, AsyncBufReadExt }, select};
+use tokio::{io::{ self, AsyncBufReadExt }, select, time::MissedTickBehavior};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -33,6 +33,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         pending_rating_update: HashMap::new(),
         pending_file_requests: HashMap::new(),
         pending_file_offers: HashMap::new(),
+        rendezvous: "12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN"
+                .parse::<PeerId>()
+                .unwrap(),
     };
 
     // Creates a chatroom to be used by all connected peers by default
@@ -40,6 +43,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     swarm.behaviour_mut().chat.gossipsub.subscribe(&topic)?;
     swarm.behaviour_mut().kademlia.set_mode(Some(kad::Mode::Server));
+
+    // Rendezvous server
+    let rendezvous_addr = cli.peer.unwrap_or("127.0.0.1".to_string());
+    let rendezvous_point_address = format!("/ip4/{}/tcp/62649", rendezvous_addr)
+        .parse::<Multiaddr>()
+        .unwrap();
+
+    let external_address = format!("/ip4/{}/tcp/0", rendezvous_addr)
+        .parse::<Multiaddr>()
+        .unwrap();
+    swarm.add_external_address(external_address);
+    swarm.dial(rendezvous_point_address.clone()).unwrap();
+
+    // Discovery ping goes off every 30 seconds
+    let mut discover_tick = tokio::time::interval(Duration::from_secs(30));
+    discover_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
     // Configures the peer to listen for incoming connection on tcp and udp over quic
     swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
@@ -52,10 +71,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let multiaddr = format!("/ip4/0.0.0.0/tcp/{listen_port}");
     let _ = swarm.listen_on(multiaddr.parse()?)?;
 
-    if let Some(peer) = cli.peer {
-        swarm.dial(peer).unwrap();
-    }
-
     let peer_id = *swarm.local_peer_id();
     let nickname = get_and_save_nickname(&mut stdin, peer_id, &mut swarm).await;
 
@@ -63,10 +78,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         select! {
             Ok(Some(line)) = stdin.next_line() => {
                 handle_input(line.trim(), &mut swarm, &mut topic, &mut state, nickname.clone(), &mut stdin).await;
-            }
+            },
 
             event = swarm.select_next_some() => match event {
-                SwarmEvent::NewListenAddr { address, .. } => println!("Your node is listening on {address}"),
+                SwarmEvent::NewListenAddr { address, .. } => println!("Your node is listening on {}", address),
 
                 // Handle all chat events
                 SwarmEvent::Behaviour(SwapBytesBehaviourEvent::Chat(chat_event)) => {
@@ -76,15 +91,45 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 // Handle all Kademlia events
                 SwarmEvent::Behaviour(SwapBytesBehaviourEvent::Kademlia(kad::Event::OutboundQueryProgressed {id, result, .. })) => {
                     handle_kademlia_event(id, result, &mut state, &mut swarm).await;
-                }
+                },
+                
 
                 // Handle all file exchange events
                 SwarmEvent::Behaviour(SwapBytesBehaviourEvent::RequestResponse(RequestResponseBehaviourEvent::RequestResponse(request_response_event))) => {
                     handle_req_res_event(request_response_event, &mut swarm, &mut stdin, &mut topic).await;
                 },
 
-                _ => {}
-            }
+                SwarmEvent::ConnectionEstablished { peer_id, .. } if peer_id == state.rendezvous => {
+                    if let Err(error) = swarm.behaviour_mut().rendezvous.rendezvous.register(
+                        rendezvous::Namespace::from_static("rendezvous"),
+                        state.rendezvous,
+                        None,
+                    ) {
+                        println!("Failed to register: {}", error);
+                    } else {
+                        println!("Connection established with rendezvous point {}", peer_id);
+        
+                        swarm.behaviour_mut().rendezvous.rendezvous.discover(
+                            Some(rendezvous::Namespace::new("rendezvous".to_string()).unwrap()),
+                            None,
+                            None,
+                            state.rendezvous,
+                        )
+                    }
+                    
+                },
+
+                _ => {},
+            },
         }
     }
 }
+
+// If discovery tick, try to discover new peers
+// _ = discover_tick.tick() =>
+// swarm.behaviour_mut().rendezvous.rendezvous.discover(
+//     Some(rendezvous::Namespace::new("rendezvous".to_string()).unwrap()),
+//     None,
+//     None,
+//     state.rendezvous
+// ),

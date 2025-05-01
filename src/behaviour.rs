@@ -1,6 +1,8 @@
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 use libp2p::{
-    gossipsub::{self, IdentTopic}, kad::{self, store::MemoryStore, QueryId, QueryResult}, mdns, request_response::{self, ProtocolSupport}, swarm::NetworkBehaviour, PeerId, StreamProtocol
+    gossipsub::{self, IdentTopic}, kad::{self, store::MemoryStore, QueryId, QueryResult}, mdns, ping, rendezvous, request_response::{self, ProtocolSupport}, swarm::NetworkBehaviour, PeerId, StreamProtocol
 };
 use tokio::{fs::File, io::{self, AsyncReadExt, AsyncWriteExt}};
 use uuid::Uuid;
@@ -37,6 +39,13 @@ pub struct SwapBytesBehaviour {
     pub chat: ChatBehaviour,
     pub request_response: RequestResponseBehaviour,
     pub kademlia: kad::Behaviour<MemoryStore>,
+    pub rendezvous: RendezvousBehaviour
+}
+
+#[derive(NetworkBehaviour)]
+pub struct RendezvousBehaviour {
+    pub rendezvous: rendezvous::client::Behaviour,
+    pub ping: ping::Behaviour,
 }
 
 
@@ -54,13 +63,20 @@ pub fn create_swapbytes_behaviour(key: &libp2p::identity::Keypair) -> Result<Swa
     };
 
     let kademlia_behaviour = kad::Behaviour::new(
-                                                    key.public().to_peer_id(),
-                                                MemoryStore::new(key.public().to_peer_id()));
+                            key.public().to_peer_id(),
+                            MemoryStore::new(key.public().to_peer_id()));
+
+    let rendezvous_behaviour = RendezvousBehaviour {
+        rendezvous: rendezvous::client::Behaviour::new(key.clone()),
+        ping: ping::Behaviour::new(ping::Config::new().with_interval(Duration::from_secs(1))),
+    };
+                                            
 
     Ok(SwapBytesBehaviour {
         chat: chat_behaviour,
         request_response: request_response_behaviour,
         kademlia: kademlia_behaviour,
+        rendezvous: rendezvous_behaviour
     })
 }
 

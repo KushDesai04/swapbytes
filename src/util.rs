@@ -13,7 +13,7 @@ pub struct Cli {
     pub port: Option<String>,
 
     #[arg(long)]
-    pub peer: Option<Multiaddr>,
+    pub peer: Option<String>,
 }
 pub enum ConnectionRequest {
     NicknameLookup(String, PeerId),
@@ -25,6 +25,7 @@ pub struct ChatState {
     pub pending_rating_update: HashMap<kad::QueryId, i32>,
     pub pending_file_requests: HashMap<kad::QueryId, (PeerId, PeerId, String)>,
     pub pending_file_offers: HashMap<kad::QueryId, (PeerId, PeerId, Vec<u8>)>,
+    pub rendezvous: PeerId,
 }
 
 #[derive(Serialize, Deserialize)]
