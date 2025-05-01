@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use clap::Parser;
-use libp2p::{ kad, Multiaddr, PeerId };
+use libp2p::{ kad, PeerId };
 use serde::{Deserialize, Serialize};
 use tokio::io;
 
@@ -23,8 +23,6 @@ pub struct ChatState {
     pub pending_messages: HashMap<kad::QueryId, (PeerId, Vec<u8>)>,
     pub pending_connections: HashMap<kad::QueryId, ConnectionRequest>,
     pub pending_rating_update: HashMap<kad::QueryId, i32>,
-    pub pending_file_requests: HashMap<kad::QueryId, (PeerId, PeerId, String)>,
-    pub pending_file_offers: HashMap<kad::QueryId, (PeerId, PeerId, Vec<u8>)>,
     pub rendezvous: PeerId,
 }
 

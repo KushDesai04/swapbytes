@@ -5,9 +5,9 @@ mod input;
 use futures::StreamExt;
 use util::{ Cli, get_and_save_nickname, ChatState };
 use input::handle_input;
-use behaviour::{create_swapbytes_behaviour, handle_chat_event, handle_kademlia_event, handle_req_res_event, RequestResponseBehaviourEvent, SwapBytesBehaviourEvent};
+use behaviour::{create_swapbytes_behaviour, handle_chat_event, handle_kademlia_event, handle_req_res_event, RendezvousBehaviourEvent, RequestResponseBehaviourEvent, SwapBytesBehaviour, SwapBytesBehaviourEvent};
 use clap::Parser;
-use libp2p::{ gossipsub, kad, noise, rendezvous, swarm::SwarmEvent, tcp, yamux, Multiaddr, PeerId };
+use libp2p::{ gossipsub, kad, multiaddr::Protocol, noise, rendezvous, swarm::SwarmEvent, tcp, yamux, Multiaddr, PeerId };
 use std::{ collections::HashMap, error::Error, time::Duration };
 use tokio::{io::{ self, AsyncBufReadExt }, select, time::MissedTickBehavior};
 
@@ -31,8 +31,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         pending_messages: HashMap::new(),
         pending_connections: HashMap::new(),
         pending_rating_update: HashMap::new(),
-        pending_file_requests: HashMap::new(),
-        pending_file_offers: HashMap::new(),
         rendezvous: "12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN"
                 .parse::<PeerId>()
                 .unwrap(),
@@ -81,7 +79,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             },
 
             event = swarm.select_next_some() => match event {
-                SwarmEvent::NewListenAddr { address, .. } => println!("Your node is listening on {}", address),
+                SwarmEvent::NewListenAddr { address, .. } => {
+                    println!("Your node is listening on {}", address);
+                },
 
                 // Handle all chat events
                 SwarmEvent::Behaviour(SwapBytesBehaviourEvent::Chat(chat_event)) => {
@@ -116,18 +116,42 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         )
                     }
                 },
+                SwarmEvent::Behaviour(SwapBytesBehaviourEvent::Rendezvous(RendezvousBehaviourEvent::Rendezvous(rendezvous::client::Event::Discovered {
+                    registrations,
+                    ..
+                }))) => {
+                    for registration in registrations {
+                        for address in registration.record.addresses() {
+                            let peer = registration.record.peer_id();
+                            println!("Discovered peer: {} at address: {}", peer, address);
+
+                            let p2p_suffix = Protocol::P2p(peer);
+                            let address_with_p2p =
+                                if !address.ends_with(&Multiaddr::empty().with(p2p_suffix.clone())) {
+                                    address.clone().with(p2p_suffix)
+                                } else {
+                                    address.clone()
+                                };
+
+                            swarm.dial(address_with_p2p).unwrap();
+                        }
+                    }
+                }
 
                 _ => {},
             },
+
+
             // If discovery tick, try to discover new peers
             _ = discover_tick.tick() => {
                 println!("discover tick");
-            swarm.behaviour_mut().rendezvous.rendezvous.discover(
-                Some(rendezvous::Namespace::new("rendezvous".to_string()).unwrap()),
-                None,
-                None,
-                state.rendezvous
-            )
+                swarm.dial(rendezvous_point_address.clone()).unwrap();
+                swarm.behaviour_mut().rendezvous.rendezvous.discover(
+                    Some(rendezvous::Namespace::new("rendezvous".to_string()).unwrap()),
+                    None,
+                    None,
+                    state.rendezvous
+                )
         },
 
         }
