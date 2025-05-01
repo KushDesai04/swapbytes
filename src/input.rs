@@ -29,7 +29,6 @@ pub async fn handle_input(
                 /exit - leave SwapBytes\n
                 /connect <peer nickname> - invite a peer to a private room to request and offer files\n
                 /list - list connected peers\n
-
                 <message>"
                 );
             } else {
@@ -37,7 +36,6 @@ pub async fn handle_input(
                     "Available commands:\n
                 /help - display a list of available commands\n
                 /exit - leave SwapBytes\n
-                /connect <peer nickname> - invite a peer to a private room to request and offer files\n
                 /list - list connected peers\n
                 /request <file> - request a file from the other peer\n
                 /offer <file> - offer a file to the other peer\n

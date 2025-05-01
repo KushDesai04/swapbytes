@@ -144,7 +144,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
             // If discovery tick, try to discover new peers
             _ = discover_tick.tick() => {
-                println!("discover tick");
                 swarm.dial(rendezvous_point_address.clone()).unwrap();
                 swarm.behaviour_mut().rendezvous.rendezvous.discover(
                     Some(rendezvous::Namespace::new("rendezvous".to_string()).unwrap()),
