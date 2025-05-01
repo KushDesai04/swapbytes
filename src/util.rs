@@ -6,6 +6,7 @@ use tokio::io;
 
 use crate::behaviour::SwapBytesBehaviour;
 
+// CLI options
 #[derive(Parser, Debug)]
 #[clap(name = "libp2p request response")]
 pub struct Cli {
@@ -13,12 +14,16 @@ pub struct Cli {
     pub port: Option<String>,
 
     #[arg(long)]
-    pub peer: Option<String>,
+    pub server: Option<String>,
 }
+
+// Private Connection Request
 pub enum ConnectionRequest {
     NicknameLookup(String, PeerId),
     PeerData(PeerId, String, PeerId),
 }
+
+// Swapbytes state
 pub struct ChatState {
     pub pending_messages: HashMap<kad::QueryId, (PeerId, Vec<u8>)>,
     pub pending_connections: HashMap<kad::QueryId, ConnectionRequest>,
@@ -26,18 +31,21 @@ pub struct ChatState {
     pub rendezvous: PeerId,
 }
 
+// Struct to store in DHT
 #[derive(Serialize, Deserialize)]
 pub struct PeerData {
     pub nickname: String,
     pub rating: i32,
 }
 
+// Struct to store private room invitation data
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Invite {  // New struct for the invite data
     pub room_id: String,
     pub initiator_nickname: String,
 }
 
+// Enum to handle private room invitations
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PrivateRoomProtocol {
     Invite(Invite),
@@ -45,6 +53,7 @@ pub enum PrivateRoomProtocol {
     Reject(String),
 }
 
+// Ask for a nickname and save it to the DHT
 pub async fn get_and_save_nickname(
     stdin: &mut io::Lines<io::BufReader<io::Stdin>>,
     peer_id: PeerId,
@@ -96,6 +105,9 @@ pub async fn get_and_save_nickname(
     let reverse_key = kad::RecordKey::new(
         &format!("nickname:{}", nickname).as_bytes()
     );
+
+    // Storing reverse: nickname: peerID
+    // Uses double the storage, but allows easy access when searching for a peer by their nickname
     let reverse_record = kad::Record {
         key: reverse_key,
         value: peer_id.to_bytes().to_vec(),
@@ -109,6 +121,8 @@ pub async fn get_and_save_nickname(
     nickname
 }
 
+
+// Update a peer rating
 pub async fn update_peer_rating(
     swarm: &mut libp2p::Swarm<SwapBytesBehaviour>,
     peer_id: PeerId,

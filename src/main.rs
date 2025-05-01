@@ -43,7 +43,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     swarm.behaviour_mut().kademlia.set_mode(Some(kad::Mode::Server));
 
     // Rendezvous server
-    let rendezvous_addr = cli.peer.unwrap_or("127.0.0.1".to_string());
+    let rendezvous_addr = cli.server.unwrap_or("127.0.0.1".to_string());
     let rendezvous_point_address = format!("/ip4/{}/tcp/62649", rendezvous_addr)
         .parse::<Multiaddr>()
         .unwrap();
@@ -99,6 +99,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     handle_req_res_event(request_response_event, &mut swarm, &mut stdin, &mut topic).await;
                 },
 
+                // When a new connection is made, discover other peers
                 SwarmEvent::ConnectionEstablished { peer_id, .. } if peer_id == state.rendezvous => {
                     if let Err(error) = swarm.behaviour_mut().rendezvous.rendezvous.register(
                         rendezvous::Namespace::from_static("rendezvous"),
@@ -107,6 +108,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     ) {
                         println!("Failed to register: {error}");
                     } else {
+                        swarm.dial(rendezvous_point_address.clone()).unwrap();
                         println!("Connection established with rendezvous point {}", peer_id);
                         swarm.behaviour_mut().rendezvous.rendezvous.discover(
                             Some(rendezvous::Namespace::new("rendezvous".to_string()).unwrap()),
@@ -116,6 +118,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         )
                     }
                 },
+                // When another peer is discovered, connect with them
                 SwarmEvent::Behaviour(SwapBytesBehaviourEvent::Rendezvous(RendezvousBehaviourEvent::Rendezvous(rendezvous::client::Event::Discovered {
                     registrations,
                     ..

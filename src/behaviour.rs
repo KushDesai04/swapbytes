@@ -8,7 +8,6 @@ use tokio::{fs::File, io::{self, AsyncReadExt, AsyncWriteExt}};
 use uuid::Uuid;
 use crate::util::{ChatState, ConnectionRequest, Invite, PeerData, PrivateRoomProtocol};
 
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ResponseType {
     FileResponse(Vec<u8>, String),
@@ -48,7 +47,7 @@ pub struct RendezvousBehaviour {
     pub ping: ping::Behaviour,
 }
 
-
+/* Create the behaviour with all configuration. Used in main when creating the swarm */
 pub fn create_swapbytes_behaviour(key: &libp2p::identity::Keypair) -> Result<SwapBytesBehaviour, Box<dyn std::error::Error>> {
     let chat_behaviour = ChatBehaviour {
         mdns: mdns::tokio::Behaviour::new(mdns::Config::default(), key.public().to_peer_id())?,
@@ -80,8 +79,11 @@ pub fn create_swapbytes_behaviour(key: &libp2p::identity::Keypair) -> Result<Swa
     })
 }
 
+
+/* Handle all chat events */
 pub async fn handle_chat_event(chat_event: ChatBehaviourEvent, state: &mut ChatState, swarm: &mut libp2p::Swarm<SwapBytesBehaviour>) {
     match chat_event {
+        // Discovering a peer with mDNS
         ChatBehaviourEvent::Mdns(mdns::Event::Discovered(list)) => {
             for (peer_id, multiaddr) in list {
                 println!("mDns discovered new peer: {peer_id}, listening on {multiaddr}");
@@ -89,14 +91,14 @@ pub async fn handle_chat_event(chat_event: ChatBehaviourEvent, state: &mut ChatS
                 swarm.behaviour_mut().kademlia.add_address(&peer_id, multiaddr);
             }
         }
-
+        // mDNS connection expired
         ChatBehaviourEvent::Mdns(mdns::Event::Expired(list)) => {
             for (peer_id, multiaddr) in list {
                 println!("mDNS peer has expired: {peer_id}, listening on {multiaddr}");
                 swarm.behaviour_mut().chat.gossipsub.remove_explicit_peer(&peer_id);
             }
         }
-
+        // Sending a chat message
         ChatBehaviourEvent::Gossipsub(gossipsub::Event::Message {
             propagation_source: peer_id,
             message_id: _id,
@@ -115,9 +117,12 @@ pub async fn handle_chat_event(chat_event: ChatBehaviourEvent, state: &mut ChatS
     }
 }
 
+
+/* Handle all kademlia events */
 pub async fn handle_kademlia_event(id: QueryId, result: QueryResult, state: &mut ChatState, swarm: &mut libp2p::Swarm<SwapBytesBehaviour> ) {
     match result {
         kad::QueryResult::GetRecord(Ok(kad::GetRecordOk::FoundRecord(peer_record))) => {
+            // Print a message that has been sent
             if let Some((peer_id, msg)) = state.pending_messages.remove(&id) {
                 match serde_json::from_slice::<PeerData>(&peer_record.record.value) {
                     Ok(peer) => {
@@ -131,8 +136,10 @@ pub async fn handle_kademlia_event(id: QueryId, result: QueryResult, state: &mut
                         println!("Peer {peer_id}: {}", String::from_utf8_lossy(&msg));
                     }
                 }
+            // Handle a private connection request
             } else if let Some(request_type) = state.pending_connections.remove(&id) {
                 match request_type {
+                    // Check that the other peer exists before connecting
                     ConnectionRequest::NicknameLookup(initiator_nickname, initiator_peer_id) => {
                         match PeerId::from_bytes(&peer_record.record.value) {
                             Ok(peer_id) => {
@@ -153,6 +160,7 @@ pub async fn handle_kademlia_event(id: QueryId, result: QueryResult, state: &mut
                             }
                         }
                     },
+                    // Send a private connection request
                     ConnectionRequest::PeerData(other_peer_id, initiator_nickname, initiator_peer_id) => {
                         match serde_json::from_slice::<PeerData>(&peer_record.record.value) {
                             Ok(peer) => {
@@ -170,6 +178,7 @@ pub async fn handle_kademlia_event(id: QueryId, result: QueryResult, state: &mut
                         }
                     },
                 }
+            // Handle a rating update (when leaving a private room)
             } else if let Some(rating) = state.pending_rating_update.remove(&id) {
                 match serde_json::from_slice::<PeerData>(&peer_record.record.value) {
                     Ok(peer) => {
@@ -223,6 +232,8 @@ pub async fn handle_kademlia_event(id: QueryId, result: QueryResult, state: &mut
     }
 }
 
+
+/* Handle all request response events */
 pub async fn handle_req_res_event(request_response_event: request_response::Event<RequestType, ResponseType>, swarm: &mut libp2p::Swarm<SwapBytesBehaviour>, stdin: &mut io::Lines<io::BufReader<io::Stdin>>, topic: &mut gossipsub::IdentTopic) {
     match request_response_event {
         request_response::Event::Message {message, ..} => match message {
@@ -281,7 +292,7 @@ pub async fn handle_req_res_event(request_response_event: request_response::Even
             },
 
             request_response::Message::Request { request: RequestType::FileOffer(file_data, filename), channel, .. } => {
-                // A file request has been received
+                // A file offer has been received
                 println!("Received file offer for: {}", filename);
                 println!("Do you want the file? (y/n)");
                 let response;
@@ -380,6 +391,7 @@ pub async fn handle_req_res_event(request_response_event: request_response::Even
                 
             },
 
+            // Handle receiving a file
             request_response::Message::Response {response: ResponseType::FileResponse(file_data, filename), request_id } => {
                 if file_data.is_empty() {
                     println!("File request was rejected or file not found.");
@@ -399,6 +411,7 @@ pub async fn handle_req_res_event(request_response_event: request_response::Even
                 }
             },
 
+            // Update initiator on offer result
             request_response::Message::Response {response: ResponseType::FileOfferResponse(offer_accepted), .. } => {
                 if offer_accepted {
                     println!("File offer accepted.");
@@ -406,7 +419,7 @@ pub async fn handle_req_res_event(request_response_event: request_response::Even
                     println!("File offer rejected.");
                 }
             }
-
+            // Accept or Reject a private room invitation
             request_response::Message::Response {response: ResponseType::PrivateRoomResponse(protocol), .. } => {
                 if let PrivateRoomProtocol::Reject(_room_id) = protocol {
                     println!("Private room request rejected.");

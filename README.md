@@ -29,7 +29,7 @@ Otherwise, you can run a server locally by:
 
 ### Command-line options
 - `--port <port>`: Port number to listen on, defaults to a random unused port
-- `--peer <ip>`: An optional rendezvous server address, defaults to the local network.
+- `--server <ip>`: An optional rendezvous server address, defaults to the local network.
 
 ### IMPORTANT: If a rendezvous server is not found, the application will run using mDNS for peer discovery.
 
