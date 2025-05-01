@@ -92,7 +92,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 SwarmEvent::Behaviour(SwapBytesBehaviourEvent::Kademlia(kad::Event::OutboundQueryProgressed {id, result, .. })) => {
                     handle_kademlia_event(id, result, &mut state, &mut swarm).await;
                 },
-                
+
 
                 // Handle all file exchange events
                 SwarmEvent::Behaviour(SwapBytesBehaviourEvent::RequestResponse(RequestResponseBehaviourEvent::RequestResponse(request_response_event))) => {
@@ -105,10 +105,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         state.rendezvous,
                         None,
                     ) {
-                        println!("Failed to register: {}", error);
+                        println!("Failed to register: {error}");
                     } else {
                         println!("Connection established with rendezvous point {}", peer_id);
-        
                         swarm.behaviour_mut().rendezvous.rendezvous.discover(
                             Some(rendezvous::Namespace::new("rendezvous".to_string()).unwrap()),
                             None,
@@ -116,20 +115,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             state.rendezvous,
                         )
                     }
-                    
                 },
 
                 _ => {},
             },
+            // If discovery tick, try to discover new peers
+            _ = discover_tick.tick() => {
+                println!("discover tick");
+            swarm.behaviour_mut().rendezvous.rendezvous.discover(
+                Some(rendezvous::Namespace::new("rendezvous".to_string()).unwrap()),
+                None,
+                None,
+                state.rendezvous
+            )
+        },
+
         }
     }
 }
 
-// If discovery tick, try to discover new peers
-// _ = discover_tick.tick() =>
-// swarm.behaviour_mut().rendezvous.rendezvous.discover(
-//     Some(rendezvous::Namespace::new("rendezvous".to_string()).unwrap()),
-//     None,
-//     None,
-//     state.rendezvous
-// ),
