@@ -193,6 +193,15 @@ pub async fn handle_kademlia_event(id: QueryId, result: QueryResult, state: &mut
                         println!("Error retrieving peer data for rating update: {}", String::from_utf8_lossy(&peer_record.record.value));
                     }
                 }
+            } else {
+                match serde_json::from_slice::<PeerData>(&peer_record.record.value) {
+                    Ok(peer_data) => {
+                        println!("Connected peer: {}", peer_data.nickname);
+                    }
+                    Err(e) => {
+                        println!("Failed to deserialize peer data. Error: {:?}", e);
+                    }
+                }
             }
         },
 
