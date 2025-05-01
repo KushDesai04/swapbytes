@@ -1,10 +1,10 @@
 use std::str::FromStr;
-use libp2p::{ gossipsub::{ self, TopicHash }, kad::{ self, store::RecordStore, QueryId }, PeerId };
+use libp2p::{ gossipsub::{ self, TopicHash }, kad};
 use tokio::{ fs::File, io::{ self, AsyncReadExt } };
 
 use crate::{
     behaviour::{ RequestType, SwapBytesBehaviour },
-    util::{ update_peer_rating, ChatState, ConnectionRequest, PeerData },
+    util::{ update_peer_rating, ChatState, ConnectionRequest },
 };
 
 pub async fn handle_input(

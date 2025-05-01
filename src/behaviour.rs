@@ -265,7 +265,7 @@ pub async fn handle_req_res_event(request_response_event: request_response::Even
                             // Send the response to the file requester
                             match swarm.behaviour_mut().request_response.request_response.send_response(channel, ResponseType::FileResponse(buffer, filename)) {
                                 Ok(()) => {},
-                                Err(e) => println!("Failed to send file response")
+                                Err(_) => println!("Failed to send file response")
                             }
                         }
                         // If the file doesn't exist send an empty vector
@@ -273,7 +273,7 @@ pub async fn handle_req_res_event(request_response_event: request_response::Even
                             println!("File not found. Sending empty response.");
                             match swarm.behaviour_mut().request_response.request_response.send_response(channel, ResponseType::FileResponse(vec![], String::new())) {
                                 Ok(()) => {},
-                                Err(e) => println!("Failed to send file response")
+                                Err(_) => println!("Failed to send file response")
                             }
                         }
                     };
@@ -399,7 +399,7 @@ pub async fn handle_req_res_event(request_response_event: request_response::Even
                 }
             },
 
-            request_response::Message::Response {response: ResponseType::FileOfferResponse(offer_accepted), request_id } => {
+            request_response::Message::Response {response: ResponseType::FileOfferResponse(offer_accepted), .. } => {
                 if offer_accepted {
                     println!("File offer accepted.");
                 } else {

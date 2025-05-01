@@ -5,7 +5,7 @@ mod input;
 use futures::StreamExt;
 use util::{ Cli, get_and_save_nickname, ChatState };
 use input::handle_input;
-use behaviour::{create_swapbytes_behaviour, handle_chat_event, handle_kademlia_event, handle_req_res_event, RendezvousBehaviourEvent, RequestResponseBehaviourEvent, SwapBytesBehaviour, SwapBytesBehaviourEvent};
+use behaviour::{create_swapbytes_behaviour, handle_chat_event, handle_kademlia_event, handle_req_res_event, RendezvousBehaviourEvent, RequestResponseBehaviourEvent, SwapBytesBehaviourEvent};
 use clap::Parser;
 use libp2p::{ gossipsub, kad, multiaddr::Protocol, noise, rendezvous, swarm::SwarmEvent, tcp, yamux, Multiaddr, PeerId };
 use std::{ collections::HashMap, error::Error, time::Duration };
